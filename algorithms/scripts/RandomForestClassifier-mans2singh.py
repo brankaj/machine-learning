@@ -1,9 +1,9 @@
 
 # coding: utf-8
 
-# # Create a logistic regression model to predict TP53 mutation from gene expression data in TCGA
+# # Create a RandomForestClassifier model to predict TP53 mutation from gene expression data in TCGA
 
-# In[1]:
+# In[33]:
 
 import os
 import urllib
@@ -15,7 +15,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn import preprocessing, grid_search
-from sklearn.linear_model import SGDClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.cross_validation import train_test_split
 from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.pipeline import make_pipeline
@@ -23,32 +23,31 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.feature_selection import SelectKBest
 from statsmodels.robust.scale import mad
 
-
-# In[2]:
-
-get_ipython().magic('matplotlib inline')
+get_ipython().magic(u'matplotlib inline')
+import matplotlib.pyplot as plt
 plt.style.use('seaborn-notebook')
 
 
 # ## Specify model configuration
 
-# In[3]:
+# In[34]:
 
 # We're going to be building a 'TP53' classifier 
-GENE = '7157' # TP53
+GENE = 'TP53'
 
 
-# In[4]:
+# In[35]:
 
 # Parameter Sweep for Hyperparameters
-n_feature_kept = 500
+n_feature_kept = 5000
 param_fixed = {
-    'loss': 'log',
-    'penalty': 'elasticnet',
+    'min_samples': 100,
+    'class_weight' : 'balanced'
 }
 param_grid = {
-    'alpha': [10 ** x for x in range(-6, 1)],
-    'l1_ratio': [0, 0.05, 0.1, 0.2, 0.5, 0.8, 0.9, 0.95, 1],
+    'max_depth': [1, 10, 100, 1000],
+    'n_estimators' : [ 10 ** x for x in  range(2,4)],
+    'min_samples_split': [2,10,50,250]
 }
 
 
@@ -58,28 +57,50 @@ param_grid = {
 
 # ## Load Data
 
-# In[5]:
+# In[36]:
 
-get_ipython().run_cell_magic('time', '', "path = os.path.join('..', 'download', 'expression-matrix.tsv.bz2')\nX = pd.read_table(path, index_col=0)")
-
-
-# In[6]:
-
-get_ipython().run_cell_magic('time', '', "path = os.path.join('..', 'download', 'mutation-matrix.tsv.bz2')\nY = pd.read_table(path, index_col=0)")
+if not os.path.exists('data'):
+    os.makedirs('data')
 
 
-# In[7]:
+# In[37]:
+
+url_to_path = {
+    # X matrix
+    'https://ndownloader.figshare.com/files/5514386':
+        os.path.join('data', 'expression.tsv.bz2'),
+    # Y Matrix
+    'https://ndownloader.figshare.com/files/5514389':
+        os.path.join('data', 'mutation-matrix.tsv.bz2'),
+}
+
+for url, path in url_to_path.items():
+    if not os.path.exists(path):
+        urllib.request.urlretrieve(url, path)
+
+
+# In[38]:
+
+get_ipython().run_cell_magic(u'time', u'', u"path = os.path.join('data', 'expression.tsv.bz2')\nX = pd.read_table(path, index_col=0)")
+
+
+# In[39]:
+
+get_ipython().run_cell_magic(u'time', u'', u"path = os.path.join('data', 'mutation-matrix.tsv.bz2')\nY = pd.read_table(path, index_col=0)")
+
+
+# In[40]:
 
 y = Y[GENE]
 
 
-# In[8]:
+# In[41]:
 
 # The Series now holds TP53 Mutation Status for each Sample
 y.head(6)
 
 
-# In[9]:
+# In[42]:
 
 # Here are the percentage of tumors with NF1
 y.value_counts(True)
@@ -87,7 +108,7 @@ y.value_counts(True)
 
 # ## Set aside 10% of the data for testing
 
-# In[10]:
+# In[43]:
 
 # Typically, this can only be done where the number of mutations is large enough
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=0)
@@ -96,7 +117,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_
 
 # ## Median absolute deviation feature selection
 
-# In[11]:
+# In[44]:
 
 def fs_mad(x, y):
     """    
@@ -111,12 +132,9 @@ feature_select = SelectKBest(fs_mad, k=n_feature_kept)
 
 # ## Define pipeline and Cross validation model fitting
 
-# In[12]:
+# In[45]:
 
-# Include loss='log' in param_grid doesn't work with pipeline somehow
-clf = SGDClassifier(random_state=0, class_weight='balanced',
-                    loss=param_fixed['loss'], penalty=param_fixed['penalty'])
-
+clf = RandomForestClassifier(min_samples_leaf=5, random_state=2)
 # joblib is used to cross-validate in parallel by setting `n_jobs=-1` in GridSearchCV
 # Supress joblib warning. See https://github.com/scikit-learn/scikit-learn/issues/6370
 warnings.filterwarnings('ignore', message='Changing the shape of non-C contiguous array')
@@ -127,24 +145,24 @@ pipeline = make_pipeline(
     clf_grid)
 
 
-# In[13]:
+# In[46]:
 
-get_ipython().run_cell_magic('time', '', '# Fit the model (the computationally intensive part)\npipeline.fit(X=X_train, y=y_train)\nbest_clf = clf_grid.best_estimator_\nfeature_mask = feature_select.get_support()  # Get a boolean array indicating the selected features')
+get_ipython().run_cell_magic(u'time', u'', u'# Fit the model (the computationally intensive part)\npipeline.fit(X=X_train, y=y_train)\nbest_clf = clf_grid.best_estimator_\nfeature_mask = feature_select.get_support()  # Get a boolean array indicating the selected features')
 
 
-# In[14]:
+# In[47]:
 
 clf_grid.best_params_
 
 
-# In[15]:
+# In[48]:
 
 best_clf
 
 
 # ## Visualize hyperparameters performance
 
-# In[16]:
+# In[49]:
 
 def grid_scores_to_df(grid_scores):
     """
@@ -164,35 +182,53 @@ def grid_scores_to_df(grid_scores):
 
 # ## Process Mutation Matrix
 
-# In[17]:
+# In[50]:
 
 cv_score_df = grid_scores_to_df(clf_grid.grid_scores_)
 cv_score_df.head(2)
 
 
-# In[18]:
+# In[51]:
 
 # Cross-validated performance distribution
-facet_grid = sns.factorplot(x='l1_ratio', y='score', col='alpha',
+facet_grid = sns.factorplot(x='max_depth', y='score', col='n_estimators',
     data=cv_score_df, kind='violin', size=4, aspect=1)
 facet_grid.set_ylabels('AUROC');
 
 
-# In[19]:
+# In[52]:
 
 # Cross-validated performance heatmap
-cv_score_mat = pd.pivot_table(cv_score_df, values='score', index='l1_ratio', columns='alpha')
+cv_score_mat = pd.pivot_table(cv_score_df, values='score', index='max_depth', columns='n_estimators')
 ax = sns.heatmap(cv_score_mat, annot=True, fmt='.1%')
-ax.set_xlabel('Regularization strength multiplier (alpha)')
-ax.set_ylabel('Elastic net mixing parameter (l1_ratio)');
+ax.set_xlabel('(n_estimators)')
+ax.set_ylabel('(max_depth)');
+
+
+# In[53]:
+
+# Cross-validated performance heatmap
+cv_score_mat = pd.pivot_table(cv_score_df, values='score', index='max_depth', columns='min_samples_split')
+ax = sns.heatmap(cv_score_mat, annot=True, fmt='.1%')
+ax.set_xlabel('(min_samples_split)')
+ax.set_ylabel('(max_depth)');
+
+
+# In[54]:
+
+# Cross-validated performance heatmap
+cv_score_mat = pd.pivot_table(cv_score_df, values='score', index='n_estimators', columns='min_samples_split')
+ax = sns.heatmap(cv_score_mat, annot=True, fmt='.1%')
+ax.set_xlabel('(min_samples_split)')
+ax.set_ylabel('(n_estimators)');
 
 
 # ## Use Optimal Hyperparameters to Output ROC Curve
 
-# In[20]:
+# In[55]:
 
-y_pred_train = pipeline.decision_function(X_train)
-y_pred_test = pipeline.decision_function(X_test)
+y_pred_train = pipeline.predict_proba(X_train)[:, 1]
+y_pred_test = pipeline.predict_proba(X_test)[:, 1]
 
 def get_threshold_metrics(y_true, y_pred):
     roc_columns = ['fpr', 'tpr', 'threshold']
@@ -205,7 +241,7 @@ metrics_train = get_threshold_metrics(y_train, y_pred_train)
 metrics_test = get_threshold_metrics(y_test, y_pred_test)
 
 
-# In[21]:
+# In[56]:
 
 # Plot ROC
 plt.figure()
@@ -223,25 +259,33 @@ plt.legend(loc='lower right');
 
 # ## What are the classifier coefficients?
 
-# In[22]:
+# In[57]:
 
-coef_df = pd.DataFrame(best_clf.coef_.transpose(), index=X.columns[feature_mask], columns=['weight'])
-coef_df['abs'] = coef_df['weight'].abs()
-coef_df = coef_df.sort_values('abs', ascending=False)
+best_clf.feature_importances_
 
 
-# In[23]:
+# In[58]:
 
-'{:.1%} zero coefficients; {:,} negative and {:,} positive coefficients'.format(
-    (coef_df.weight == 0).mean(),
-    (coef_df.weight < 0).sum(),
-    (coef_df.weight > 0).sum()
+feature_importances_df = pd.DataFrame(best_clf.feature_importances_.transpose(), index=X.columns[feature_mask], columns=['weight'])
+feature_importances_df = feature_importances_df.sort_values('weight', ascending=False)
+
+
+# In[59]:
+
+'{:.1%} zero coefficients; and {:,} positive coefficients'.format(
+    (feature_importances_df.weight == 0).mean(),
+    (feature_importances_df.weight > 0).sum()
 )
 
 
-# In[24]:
+# In[60]:
 
-coef_df.head(10)
+feature_importances_df.head(10)
+
+
+# In[61]:
+
+sns.distplot(feature_importances_df['weight'])
 
 
 # The results are not surprising. TP53 is a transcription modulator and when it mutated in a tumor, the cell goes haywire. This makes finding a transcriptional signature fairly easy. Also, the genes that the classifier uses is interesting, but not necessarily novel.
@@ -253,35 +297,38 @@ coef_df.head(10)
 
 # ## Investigate the predictions
 
-# In[25]:
+# In[62]:
 
 predict_df = pd.DataFrame.from_items([
     ('sample_id', X.index),
     ('testing', X.index.isin(X_test.index).astype(int)),
     ('status', y),
-    ('decision_function', pipeline.decision_function(X)),
     ('probability', pipeline.predict_proba(X)[:, 1]),
 ])
 predict_df['probability_str'] = predict_df['probability'].apply('{:.1%}'.format)
 
 
-# In[26]:
+# In[63]:
 
 # Top predictions amongst negatives (potential hidden responders)
-predict_df.sort_values('decision_function', ascending=False).query("status == 0").head(10)
+predict_df.sort_values('probability', ascending=False).query("status == 0").head(10)
 
 
-# In[27]:
+# In[64]:
 
 # Ignore numpy warning caused by seaborn
 warnings.filterwarnings('ignore', 'using a non-integer number instead of an integer')
 
-ax = sns.distplot(predict_df.query("status == 0").decision_function, hist=False, label='Negatives')
-ax = sns.distplot(predict_df.query("status == 1").decision_function, hist=False, label='Positives')
-
-
-# In[28]:
-
 ax = sns.distplot(predict_df.query("status == 0").probability, hist=False, label='Negatives')
 ax = sns.distplot(predict_df.query("status == 1").probability, hist=False, label='Positives')
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+
 

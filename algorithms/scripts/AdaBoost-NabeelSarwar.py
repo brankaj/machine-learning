@@ -15,13 +15,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn import preprocessing, grid_search
-from sklearn.linear_model import SGDClassifier
+from sklearn.ensemble import AdaBoostClassifier
 from sklearn.cross_validation import train_test_split
 from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.feature_selection import SelectKBest
 from statsmodels.robust.scale import mad
+
+# parameter for learning
+from sklearn.tree import DecisionTreeClassifier
 
 
 # In[2]:
@@ -41,14 +44,14 @@ GENE = 'TP53'
 # In[4]:
 
 # Parameter Sweep for Hyperparameters
-n_feature_kept = 500
+n_feature_kept = 5000
 param_fixed = {
-    'loss': 'log',
-    'penalty': 'elasticnet',
+    'algorithm': 'SAMME.R',
+    'base_estimator': DecisionTreeClassifier(max_depth=1)
 }
 param_grid = {
-    'alpha': [10 ** x for x in range(-6, 1)],
-    'l1_ratio': [0, 0.05, 0.1, 0.2, 0.5, 0.8, 0.9, 0.95, 1],
+    'learning_rate': [0.5, 1, 2, 4],
+    'n_estimators': [10, 25, 50]
 }
 
 
@@ -109,7 +112,7 @@ y.value_counts(True)
 
 # ## Set aside 10% of the data for testing
 
-# In[13]:
+# In[12]:
 
 # Typically, this can only be done where the number of mutations is large enough
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=0)
@@ -118,7 +121,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_
 
 # ## Median absolute deviation feature selection
 
-# In[14]:
+# In[13]:
 
 def fs_mad(x, y):
     """    
@@ -133,11 +136,11 @@ feature_select = SelectKBest(fs_mad, k=n_feature_kept)
 
 # ## Define pipeline and Cross validation model fitting
 
-# In[15]:
+# In[14]:
 
 # Include loss='log' in param_grid doesn't work with pipeline somehow
-clf = SGDClassifier(random_state=0, class_weight='balanced',
-                    loss=param_fixed['loss'], penalty=param_fixed['penalty'])
+clf = AdaBoostClassifier(random_state=0,
+                    base_estimator=param_fixed['base_estimator'], algorithm=param_fixed['algorithm'])
 
 # joblib is used to cross-validate in parallel by setting `n_jobs=-1` in GridSearchCV
 # Supress joblib warning. See https://github.com/scikit-learn/scikit-learn/issues/6370
@@ -149,24 +152,24 @@ pipeline = make_pipeline(
     clf_grid)
 
 
-# In[16]:
+# In[15]:
 
 get_ipython().run_cell_magic('time', '', '# Fit the model (the computationally intensive part)\npipeline.fit(X=X_train, y=y_train)\nbest_clf = clf_grid.best_estimator_\nfeature_mask = feature_select.get_support()  # Get a boolean array indicating the selected features')
 
 
-# In[17]:
+# In[16]:
 
 clf_grid.best_params_
 
 
-# In[18]:
+# In[17]:
 
 best_clf
 
 
 # ## Visualize hyperparameters performance
 
-# In[19]:
+# In[18]:
 
 def grid_scores_to_df(grid_scores):
     """
@@ -186,32 +189,32 @@ def grid_scores_to_df(grid_scores):
 
 # ## Process Mutation Matrix
 
-# In[20]:
+# In[19]:
 
 cv_score_df = grid_scores_to_df(clf_grid.grid_scores_)
 cv_score_df.head(2)
 
 
-# In[21]:
+# In[20]:
 
 # Cross-validated performance distribution
-facet_grid = sns.factorplot(x='l1_ratio', y='score', col='alpha',
+facet_grid = sns.factorplot(x='learning_rate', y='score', col='n_estimators',
     data=cv_score_df, kind='violin', size=4, aspect=1)
 facet_grid.set_ylabels('AUROC');
 
 
-# In[22]:
+# In[21]:
 
 # Cross-validated performance heatmap
-cv_score_mat = pd.pivot_table(cv_score_df, values='score', index='l1_ratio', columns='alpha')
+cv_score_mat = pd.pivot_table(cv_score_df, values='score', index='learning_rate', columns='n_estimators')
 ax = sns.heatmap(cv_score_mat, annot=True, fmt='.1%')
-ax.set_xlabel('Regularization strength multiplier (alpha)')
-ax.set_ylabel('Elastic net mixing parameter (l1_ratio)');
+ax.set_xlabel('Number of Estimators')
+ax.set_ylabel('Learning Rate');
 
 
 # ## Use Optimal Hyperparameters to Output ROC Curve
 
-# In[23]:
+# In[22]:
 
 y_pred_train = pipeline.decision_function(X_train)
 y_pred_test = pipeline.decision_function(X_test)
@@ -227,7 +230,7 @@ metrics_train = get_threshold_metrics(y_train, y_pred_train)
 metrics_test = get_threshold_metrics(y_test, y_pred_test)
 
 
-# In[24]:
+# In[23]:
 
 # Plot ROC
 plt.figure()
@@ -245,14 +248,14 @@ plt.legend(loc='lower right');
 
 # ## What are the classifier coefficients?
 
-# In[25]:
+# In[24]:
 
-coef_df = pd.DataFrame(best_clf.coef_.transpose(), index=X.columns[feature_mask], columns=['weight'])
+coef_df = pd.DataFrame(best_clf.feature_importances_.transpose(), index=X.columns[feature_mask], columns=['weight'])
 coef_df['abs'] = coef_df['weight'].abs()
 coef_df = coef_df.sort_values('abs', ascending=False)
 
 
-# In[26]:
+# In[25]:
 
 '{:.1%} zero coefficients; {:,} negative and {:,} positive coefficients'.format(
     (coef_df.weight == 0).mean(),
@@ -261,7 +264,7 @@ coef_df = coef_df.sort_values('abs', ascending=False)
 )
 
 
-# In[27]:
+# In[26]:
 
 coef_df.head(10)
 
@@ -275,7 +278,7 @@ coef_df.head(10)
 
 # ## Investigate the predictions
 
-# In[28]:
+# In[27]:
 
 predict_df = pd.DataFrame.from_items([
     ('sample_id', X.index),
@@ -287,13 +290,13 @@ predict_df = pd.DataFrame.from_items([
 predict_df['probability_str'] = predict_df['probability'].apply('{:.1%}'.format)
 
 
-# In[29]:
+# In[28]:
 
 # Top predictions amongst negatives (potential hidden responders)
 predict_df.sort_values('decision_function', ascending=False).query("status == 0").head(10)
 
 
-# In[30]:
+# In[29]:
 
 # Ignore numpy warning caused by seaborn
 warnings.filterwarnings('ignore', 'using a non-integer number instead of an integer')
@@ -302,8 +305,13 @@ ax = sns.distplot(predict_df.query("status == 0").decision_function, hist=False,
 ax = sns.distplot(predict_df.query("status == 1").decision_function, hist=False, label='Positives')
 
 
-# In[31]:
+# In[30]:
 
 ax = sns.distplot(predict_df.query("status == 0").probability, hist=False, label='Negatives')
 ax = sns.distplot(predict_df.query("status == 1").probability, hist=False, label='Positives')
+
+
+# In[ ]:
+
+
 

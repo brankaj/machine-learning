@@ -1,2 +1,5 @@
 # Jupyter Notebooks
 .ipynb_checkpoints
+
+# Large downloaded data files
+download/

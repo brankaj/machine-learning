@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn import preprocessing, grid_search
 from sklearn.linear_model import SGDClassifier
+from sklearn.svm import LinearSVC
 from sklearn.cross_validation import train_test_split
 from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.pipeline import make_pipeline
@@ -35,7 +36,7 @@ plt.style.use('seaborn-notebook')
 # In[3]:
 
 # We're going to be building a 'TP53' classifier 
-GENE = '7157' # TP53
+GENE = 'TP53'
 
 
 # In[4]:
@@ -43,12 +44,12 @@ GENE = '7157' # TP53
 # Parameter Sweep for Hyperparameters
 n_feature_kept = 500
 param_fixed = {
-    'loss': 'log',
-    'penalty': 'elasticnet',
+    'loss': 'hinge',
+    'penalty': 'l2'
 }
 param_grid = {
-    'alpha': [10 ** x for x in range(-6, 1)],
-    'l1_ratio': [0, 0.05, 0.1, 0.2, 0.5, 0.8, 0.9, 0.95, 1],
+    'C': [10 ** x for x in range(-5, 2)],
+    'intercept_scaling': [10 ** x for x in range(-5, 2)],
 }
 
 
@@ -60,26 +61,48 @@ param_grid = {
 
 # In[5]:
 
-get_ipython().run_cell_magic('time', '', "path = os.path.join('..', 'download', 'expression-matrix.tsv.bz2')\nX = pd.read_table(path, index_col=0)")
+if not os.path.exists('data'):
+    os.makedirs('data')
 
 
 # In[6]:
 
-get_ipython().run_cell_magic('time', '', "path = os.path.join('..', 'download', 'mutation-matrix.tsv.bz2')\nY = pd.read_table(path, index_col=0)")
+url_to_path = {
+    # X matrix
+    'https://ndownloader.figshare.com/files/5514386':
+        os.path.join('data', 'expression.tsv.bz2'),
+    # Y Matrix
+    'https://ndownloader.figshare.com/files/5514389':
+        os.path.join('data', 'mutation-matrix.tsv.bz2'),
+}
+
+for url, path in url_to_path.items():
+    if not os.path.exists(path):
+        urllib.request.urlretrieve(url, path)
 
 
 # In[7]:
 
-y = Y[GENE]
+get_ipython().run_cell_magic('time', '', "path = os.path.join('data', 'expression.tsv.bz2')\nX = pd.read_table(path, index_col=0)")
 
 
 # In[8]:
+
+get_ipython().run_cell_magic('time', '', "path = os.path.join('data', 'mutation-matrix.tsv.bz2')\nY = pd.read_table(path, index_col=0)")
+
+
+# In[9]:
+
+y = Y[GENE]
+
+
+# In[10]:
 
 # The Series now holds TP53 Mutation Status for each Sample
 y.head(6)
 
 
-# In[9]:
+# In[11]:
 
 # Here are the percentage of tumors with NF1
 y.value_counts(True)
@@ -87,7 +110,7 @@ y.value_counts(True)
 
 # ## Set aside 10% of the data for testing
 
-# In[10]:
+# In[12]:
 
 # Typically, this can only be done where the number of mutations is large enough
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=0)
@@ -96,7 +119,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_
 
 # ## Median absolute deviation feature selection
 
-# In[11]:
+# In[13]:
 
 def fs_mad(x, y):
     """    
@@ -111,10 +134,10 @@ feature_select = SelectKBest(fs_mad, k=n_feature_kept)
 
 # ## Define pipeline and Cross validation model fitting
 
-# In[12]:
+# In[14]:
 
 # Include loss='log' in param_grid doesn't work with pipeline somehow
-clf = SGDClassifier(random_state=0, class_weight='balanced',
+clf = LinearSVC(random_state=0, class_weight='balanced',
                     loss=param_fixed['loss'], penalty=param_fixed['penalty'])
 
 # joblib is used to cross-validate in parallel by setting `n_jobs=-1` in GridSearchCV
@@ -127,24 +150,24 @@ pipeline = make_pipeline(
     clf_grid)
 
 
-# In[13]:
+# In[15]:
 
 get_ipython().run_cell_magic('time', '', '# Fit the model (the computationally intensive part)\npipeline.fit(X=X_train, y=y_train)\nbest_clf = clf_grid.best_estimator_\nfeature_mask = feature_select.get_support()  # Get a boolean array indicating the selected features')
 
 
-# In[14]:
+# In[16]:
 
 clf_grid.best_params_
 
 
-# In[15]:
+# In[17]:
 
 best_clf
 
 
 # ## Visualize hyperparameters performance
 
-# In[16]:
+# In[18]:
 
 def grid_scores_to_df(grid_scores):
     """
@@ -164,32 +187,32 @@ def grid_scores_to_df(grid_scores):
 
 # ## Process Mutation Matrix
 
-# In[17]:
+# In[19]:
 
 cv_score_df = grid_scores_to_df(clf_grid.grid_scores_)
 cv_score_df.head(2)
 
 
-# In[18]:
+# In[20]:
 
 # Cross-validated performance distribution
-facet_grid = sns.factorplot(x='l1_ratio', y='score', col='alpha',
+facet_grid = sns.factorplot(x='C', y='score', col='intercept_scaling',
     data=cv_score_df, kind='violin', size=4, aspect=1)
 facet_grid.set_ylabels('AUROC');
 
 
-# In[19]:
+# In[21]:
 
 # Cross-validated performance heatmap
-cv_score_mat = pd.pivot_table(cv_score_df, values='score', index='l1_ratio', columns='alpha')
+cv_score_mat = pd.pivot_table(cv_score_df, values='score', index='C', columns='intercept_scaling')
 ax = sns.heatmap(cv_score_mat, annot=True, fmt='.1%')
-ax.set_xlabel('Regularization strength multiplier (alpha)')
-ax.set_ylabel('Elastic net mixing parameter (l1_ratio)');
+ax.set_xlabel('Scaling of intercept (intercept_scaling)')
+ax.set_ylabel('Penalty parameter of the error term (C)');
 
 
 # ## Use Optimal Hyperparameters to Output ROC Curve
 
-# In[20]:
+# In[22]:
 
 y_pred_train = pipeline.decision_function(X_train)
 y_pred_test = pipeline.decision_function(X_test)
@@ -205,7 +228,7 @@ metrics_train = get_threshold_metrics(y_train, y_pred_train)
 metrics_test = get_threshold_metrics(y_test, y_pred_test)
 
 
-# In[21]:
+# In[23]:
 
 # Plot ROC
 plt.figure()
@@ -223,14 +246,14 @@ plt.legend(loc='lower right');
 
 # ## What are the classifier coefficients?
 
-# In[22]:
+# In[24]:
 
 coef_df = pd.DataFrame(best_clf.coef_.transpose(), index=X.columns[feature_mask], columns=['weight'])
 coef_df['abs'] = coef_df['weight'].abs()
 coef_df = coef_df.sort_values('abs', ascending=False)
 
 
-# In[23]:
+# In[25]:
 
 '{:.1%} zero coefficients; {:,} negative and {:,} positive coefficients'.format(
     (coef_df.weight == 0).mean(),
@@ -239,7 +262,7 @@ coef_df = coef_df.sort_values('abs', ascending=False)
 )
 
 
-# In[24]:
+# In[26]:
 
 coef_df.head(10)
 
@@ -253,35 +276,48 @@ coef_df.head(10)
 
 # ## Investigate the predictions
 
-# In[25]:
+# In[27]:
 
 predict_df = pd.DataFrame.from_items([
     ('sample_id', X.index),
     ('testing', X.index.isin(X_test.index).astype(int)),
     ('status', y),
     ('decision_function', pipeline.decision_function(X)),
-    ('probability', pipeline.predict_proba(X)[:, 1]),
+    ('probability', pipeline.predict(X)),
 ])
 predict_df['probability_str'] = predict_df['probability'].apply('{:.1%}'.format)
 
 
-# In[26]:
+# In[28]:
 
 # Top predictions amongst negatives (potential hidden responders)
 predict_df.sort_values('decision_function', ascending=False).query("status == 0").head(10)
 
 
-# In[27]:
+# In[29]:
 
 # Ignore numpy warning caused by seaborn
 warnings.filterwarnings('ignore', 'using a non-integer number instead of an integer')
 
-ax = sns.distplot(predict_df.query("status == 0").decision_function, hist=False, label='Negatives')
-ax = sns.distplot(predict_df.query("status == 1").decision_function, hist=False, label='Positives')
+ax = sns.distplot(predict_df.query("status == 0").decision_function, hist=False, label='Negatives', color = 'red')
+ax = sns.distplot(predict_df.query("status == 1").decision_function, hist=False, label='Positives', color = 'green')
 
 
-# In[28]:
+# In[30]:
 
-ax = sns.distplot(predict_df.query("status == 0").probability, hist=False, label='Negatives')
-ax = sns.distplot(predict_df.query("status == 1").probability, hist=False, label='Positives')
+from sklearn.metrics import confusion_matrix
+conf_mat = confusion_matrix(predict_df.query("testing == 1").status, 
+                            predict_df.query("testing == 1").probability, 
+                            labels = [1, 0])
+cols = {'Pos': conf_mat[:,0].tolist(), 'Neg': conf_mat[:,1].tolist()}
+df_conf = pd.DataFrame(cols, index = ['Pos', 'Neg'])[['Pos', 'Neg']]
+df_conf.index.name = 'Label / Predict'
+df_conf
+
+
+# In[31]:
+
+from sklearn.metrics import f1_score
+f1 = f1_score(predict_df.query("testing == 1").status, predict_df.query("testing == 1").probability)
+'The F1 score is {:.3}'.format(f1)
 
