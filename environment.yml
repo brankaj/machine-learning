@@ -6,9 +6,11 @@ dependencies:
 - pandas=0.18.1
 - python=3.5.2
 - requests=2.11.1
-- scikit-learn=0.17.1
+- scikit-learn=0.18.0
 - scipy=0.17.1
 - seaborn=0.7.0
+- setuptools=27.2.0
 - statsmodels=0.6.1
 - pip:
   - neo4j-driver==1.0.2
+  - altair==1.2.0
